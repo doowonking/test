@@ -3,23 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>AI 양치질 도우미</title>
+  <title>AI 양치 수호대 (수동 모드)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <style>
-    body { margin: 0; text-align: center; font-family: sans-serif; background-color: #222; color: white; }
-    #startBtn { background-color: #4CAF50; color: white; font-size: 22px; font-weight: bold; padding: 15px 30px; border: none; border-radius: 10px; margin-top: 50px; cursor: pointer; }
-    #status { font-size: 20px; font-weight: bold; margin: 20px; color: #FFEB3B; }
+    body { margin: 0; text-align: center; font-family: sans-serif; background-color: #1a1a1a; color: white; overflow: hidden; }
     
-    /* 비디오와 그림(캔버스)을 겹치게 만드는 설정 */
-    #container { position: relative; width: 100vw; max-width: 500px; margin: 0 auto; display: none; }
-    video, canvas { width: 100%; border-radius: 10px; transform: scaleX(-1); /* 거울 모드(좌우 반전) */ }
-    canvas { position: absolute; top: 0; left: 0; }
+    /* 상단 상태 안내창 */
+    #status-box { position: absolute; top: 15px; left: 5%; width: 90%; z-index: 10; background: rgba(0,0,0,0.6); padding: 12px 0; border-radius: 15px; }
+    #status { font-size: 22px; font-weight: bold; color: #FFEB3B; }
+
+    /* 하단 상태 변경 버튼 */
+    #actionBtn { 
+      position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10;
+      background-color: #4CAF50; color: white; font-size: 22px; font-weight: bold; 
+      padding: 15px 40px; border: none; border-radius: 50px; cursor: pointer;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.4); display: none;
+      transition: all 0.3s;
+    }
+    #actionBtn:active { transform: translateX(-50%) scale(0.95); }
+
+    /* 카메라 화면 영역 */
+    #container { position: relative; width: 100vw; height: 100vh; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
   </style>
 </head>
 <body>
 
-  <button id="startBtn">📷 AI 양치 카메라 켜기</button>
-  <div id="status">버튼을 눌러주세요.</div>
+  <div id="status-box">
+    <div id="status">로딩 중... 잠시만 기다려주세요.</div>
+  </div>
+
+  <button id="actionBtn">📷 카메라 켜기</button>
   
   <div id="container">
     <video id="video" autoplay playsinline muted></video>
@@ -30,58 +44,62 @@
     const videoElement = document.getElementById('video');
     const canvasElement = document.getElementById('canvas');
     const canvasCtx = canvasElement.getContext('2d');
-    const startBtn = document.getElementById('startBtn');
+    const actionBtn = document.getElementById('actionBtn');
     const statusDiv = document.getElementById('status');
-    const container = document.getElementById('container');
 
-    // 1. AI (FaceMesh) 기본 설정
+    // 앱 상태 관리: 'INIT' -> 'BEFORE' (세균) -> 'AFTER' (반짝이)
+    let mode = 'INIT'; 
+
+    // AI 설정
     const faceMesh = new FaceMesh({locateFile: (file) => {
       return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
     }});
-    
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
-    // 2. 얼굴을 인식했을 때 실행되는 로직
+    // 실시간 AI 그래픽 합성
     faceMesh.onResults((results) => {
-      // 비디오 해상도에 맞춰 캔버스 크기 조절
       canvasElement.width = videoElement.videoWidth;
       canvasElement.height = videoElement.videoHeight;
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
-        // 윗입술(13번)과 아랫입술(14번) 좌표
         const upperLip = landmarks[13];
         const lowerLip = landmarks[14];
-
-        // 입술 위치에 초록색 점 그리기
-        canvasCtx.fillStyle = '#00FF00';
-        canvasCtx.beginPath();
-        canvasCtx.arc(upperLip.x * canvasElement.width, upperLip.y * canvasElement.height, 5, 0, 2 * Math.PI);
-        canvasCtx.arc(lowerLip.x * canvasElement.width, lowerLip.y * canvasElement.height, 5, 0, 2 * Math.PI);
-        canvasCtx.fill();
-
-        // 윗입술과 아랫입술의 거리 계산 (입을 벌렸는지 확인)
-        const distance = Math.abs(lowerLip.y - upperLip.y);
         
-        if (distance > 0.04) {
-          statusDiv.innerText = "양치 준비 완료! (입 벌림 😮)";
-          statusDiv.style.color = "#4CAF50"; // 초록색
-        } else {
-          statusDiv.innerText = "입을 크게 아~ 벌려주세요 😐";
-          statusDiv.style.color = "#FFEB3B"; // 노란색
+        // 입 중앙 좌표 계산
+        const mouthX = (upperLip.x + lowerLip.x) / 2 * canvasElement.width;
+        const mouthY = (upperLip.y + lowerLip.y) / 2 * canvasElement.height;
+
+        // [1단계: 양치 전 세균 모드]
+        if (mode === 'BEFORE') {
+          statusDiv.innerText = "으악! 입속에 세균 벌레들이 가득해요! 🦠";
+          statusDiv.style.color = "#FF5722";
+
+          canvasCtx.font = '45px Arial';
+          canvasCtx.textAlign = 'center';
+          canvasCtx.fillText('🦠', mouthX - 60, mouthY - 30);
+          canvasCtx.fillText('👾', mouthX + 60, mouthY + 20);
+          canvasCtx.fillText('😈', mouthX, mouthY + 50);
+        }
+        
+        // [2단계: 양치 후 반짝이 모드]
+        else if (mode === 'AFTER') {
+          statusDiv.innerText = "와~! 세균 전멸! 이빨이 반짝반짝해요! ✨🎉";
+          statusDiv.style.color = "#4CAF50";
+
+          canvasCtx.font = '50px Arial';
+          canvasCtx.textAlign = 'center';
+          canvasCtx.fillText('✨', mouthX - 70, mouthY - 40);
+          canvasCtx.fillText('🌟', mouthX + 70, mouthY - 40);
+          canvasCtx.fillText('✨', mouthX - 40, mouthY + 50);
+          canvasCtx.fillText('🦷', mouthX, mouthY); // 하얀 이빨 등장
         }
       } else {
-        statusDiv.innerText = "화면에 얼굴을 보여주세요!";
+        statusDiv.innerText = "화면에 얼굴을 보여주세요! 👀";
       }
     });
 
-    // 3. 비디오 프레임마다 AI에게 사진을 보내는 무한 루프
     async function animate() {
       if (videoElement.readyState >= 2) {
         await faceMesh.send({image: videoElement});
@@ -89,28 +107,40 @@
       requestAnimationFrame(animate);
     }
 
-    // 4. 수동 버튼 클릭 시 카메라 켜기
-    startBtn.addEventListener('click', () => {
-      statusDiv.innerText = "카메라 켜는 중... (AI 로딩에 몇 초 걸릴 수 있습니다)";
-      
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    // 버튼 하나로 순차적 제어
+    actionBtn.addEventListener('click', () => {
+      if (mode === 'INIT') {
+        // 1. 카메라 켜기 ➜ 세균 모드로 진입
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
           .then(stream => {
-            startBtn.style.display = 'none'; // 버튼 숨기기
-            container.style.display = 'block'; // 비디오 화면 보이기
-            
             videoElement.srcObject = stream;
             videoElement.onloadedmetadata = () => {
               videoElement.play();
-              animate(); // 비디오가 켜지면 AI 분석 시작!
+              animate();
+              mode = 'BEFORE';
+              actionBtn.innerText = "✨ 양치 완료! 결과 보기";
+              actionBtn.style.backgroundColor = "#E91E63"; // 핑크색 변경
             };
           })
-          .catch(err => {
-            statusDiv.innerText = "❌ 카메라 에러: " + err.message;
-            statusDiv.style.color = "red";
-          });
+          .catch(err => alert("카메라 에러: " + err.message));
+      } 
+      else if (mode === 'BEFORE') {
+        // 2. 세균 모드에서 버튼 클릭 ➜ 반짝이 모드로 변경
+        mode = 'AFTER';
+        actionBtn.innerText = "🔄 다시 검사하기 (처음으로)";
+        actionBtn.style.backgroundColor = "#00BCD4"; // 청록색 변경
+      }
+      else if (mode === 'AFTER') {
+        // 3. 반짝이 모드에서 버튼 클릭 ➜ 다시 세균 모드로 리셋
+        mode = 'BEFORE';
+        actionBtn.innerText = "✨ 양치 완료! 결과 보기";
+        actionBtn.style.backgroundColor = "#E91E63";
       }
     });
+
+    // AI 라이브러리가 로드되면 작동 버튼 표시
+    actionBtn.style.display = 'block';
+    statusDiv.innerText = "준비 완료! 아래 버튼을 눌러주세요.";
   </script>
 </body>
 </html>
