@@ -3,23 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>AI 양치질 도우미</title>
+  <title>AI 양치 수호대 (리얼 이펙트 수정본)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <style>
-    body { margin: 0; text-align: center; font-family: sans-serif; background-color: #222; color: white; }
-    #startBtn { background-color: #4CAF50; color: white; font-size: 22px; font-weight: bold; padding: 15px 30px; border: none; border-radius: 10px; margin-top: 50px; cursor: pointer; }
-    #status { font-size: 20px; font-weight: bold; margin: 20px; color: #FFEB3B; }
-    
-    /* 비디오와 그림(캔버스)을 겹치게 만드는 설정 */
-    #container { position: relative; width: 100vw; max-width: 500px; margin: 0 auto; display: none; }
-    video, canvas { width: 100%; border-radius: 10px; transform: scaleX(-1); /* 거울 모드(좌우 반전) */ }
-    canvas { position: absolute; top: 0; left: 0; }
+    body { margin: 0; text-align: center; font-family: sans-serif; background-color: #1a1a1a; color: white; overflow: hidden; }
+    #status-box { position: absolute; top: 15px; left: 5%; width: 90%; z-index: 10; background: rgba(0,0,0,0.8); padding: 12px 0; border-radius: 15px; }
+    #status { font-size: 18px; font-weight: bold; color: #FFEB3B; line-height: 1.4; }
+    #actionBtn { 
+      position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10;
+      background-color: #00BCD4; color: white; font-size: 22px; font-weight: bold; 
+      padding: 15px 40px; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+    }
+    #container { position: relative; width: 100vw; height: 100vh; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
   </style>
 </head>
 <body>
 
-  <button id="startBtn">📷 AI 양치 카메라 켜기</button>
-  <div id="status">버튼을 눌러주세요.</div>
+  <div id="status-box">
+    <div id="status">초기 화면입니다. 아래 버튼을 눌러주세요! 📷</div>
+  </div>
+
+  <button id="actionBtn">📷 카메라 켜기</button>
   
   <div id="container">
     <video id="video" autoplay playsinline muted></video>
@@ -30,87 +35,131 @@
     const videoElement = document.getElementById('video');
     const canvasElement = document.getElementById('canvas');
     const canvasCtx = canvasElement.getContext('2d');
-    const startBtn = document.getElementById('startBtn');
+    const actionBtn = document.getElementById('actionBtn');
     const statusDiv = document.getElementById('status');
-    const container = document.getElementById('container');
 
-    // 1. AI (FaceMesh) 기본 설정
-    const faceMesh = new FaceMesh({locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-    }});
-    
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    let mode = 'INIT'; 
+    let faceMesh = null;
+    let bugs = [];
+    let lights = [];
 
-    // 2. 얼굴을 인식했을 때 실행되는 로직
-    faceMesh.onResults((results) => {
-      // 비디오 해상도에 맞춰 캔버스 크기 조절
-      canvasElement.width = videoElement.videoWidth;
-      canvasElement.height = videoElement.videoHeight;
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
-        // 윗입술(13번)과 아랫입술(14번) 좌표
-        const upperLip = landmarks[13];
-        const lowerLip = landmarks[14];
-
-        // 입술 위치에 초록색 점 그리기
-        canvasCtx.fillStyle = '#00FF00';
-        canvasCtx.beginPath();
-        canvasCtx.arc(upperLip.x * canvasElement.width, upperLip.y * canvasElement.height, 5, 0, 2 * Math.PI);
-        canvasCtx.arc(lowerLip.x * canvasElement.width, lowerLip.y * canvasElement.height, 5, 0, 2 * Math.PI);
-        canvasCtx.fill();
-
-        // 윗입술과 아랫입술의 거리 계산 (입을 벌렸는지 확인)
-        const distance = Math.abs(lowerLip.y - upperLip.y);
-        
-        if (distance > 0.04) {
-          statusDiv.innerText = "양치 준비 완료! (입 벌림 😮)";
-          statusDiv.style.color = "#4CAF50"; // 초록색
-        } else {
-          statusDiv.innerText = "입을 크게 아~ 벌려주세요 😐";
-          statusDiv.style.color = "#FFEB3B"; // 노란색
-        }
-      } else {
-        statusDiv.innerText = "화면에 얼굴을 보여주세요!";
-      }
-    });
-
-    // 3. 비디오 프레임마다 AI에게 사진을 보내는 무한 루프
-    async function animate() {
-      if (videoElement.readyState >= 2) {
-        await faceMesh.send({image: videoElement});
-      }
-      requestAnimationFrame(animate);
+    function log(text, color = "#FFEB3B") {
+      statusDiv.innerText = text;
+      statusDiv.style.color = color;
     }
 
-    // 4. 수동 버튼 클릭 시 카메라 켜기
-    startBtn.addEventListener('click', () => {
-      statusDiv.innerText = "카메라 켜는 중... (AI 로딩에 몇 초 걸릴 수 있습니다)";
-      
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
-          .then(stream => {
-            startBtn.style.display = 'none'; // 버튼 숨기기
-            container.style.display = 'block'; // 비디오 화면 보이기
-            
-            videoElement.srcObject = stream;
-            videoElement.onloadedmetadata = () => {
-              videoElement.play();
-              animate(); // 비디오가 켜지면 AI 분석 시작!
-            };
-          })
-          .catch(err => {
-            statusDiv.innerText = "❌ 카메라 에러: " + err.message;
-            statusDiv.style.color = "red";
-          });
+    // 🐛 현미경 세균 데이터 생성 함수
+    function initBugs() {
+      bugs = [];
+      for(let i=0; i<8; i++) {
+        bugs.push({
+          offsetX: (Math.random() - 0.5) * 100,
+          offsetY: (Math.random() - 0.5) * 60,
+          size: 15 + Math.random() * 15,
+          speed: 0.04 + Math.random() * 0.04,
+          color: ['rgba(58, 93, 40, 0.75)', 'rgba(90, 40, 110, 0.75)', 'rgba(140, 50, 50, 0.75)'][Math.floor(Math.random()*3)],
+          seed: Math.random() * 100
+        });
       }
-    });
-  </script>
-</body>
-</html>
+    }
+
+    // 🤖 AI 설정 및 드로잉 로직
+    function setupAI() {
+      faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+      faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+      faceMesh.onResults((results) => {
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+          const landmarks = results.multiFaceLandmarks[0];
+          const upperLip = landmarks[13];
+          const lowerLip = landmarks[14];
+          
+          const distance = Math.abs(lowerLip.y - upperLip.y);
+          const mouthX = (upperLip.x + lowerLip.x) / 2 * canvasElement.width;
+          const mouthY = (upperLip.y + lowerLip.y) / 2 * canvasElement.height;
+          const mouthWidth = Math.abs(landmarks[61].x - landmarks[291].x) * canvasElement.width;
+
+          // 1️⃣ [양치 전 세균 모드]
+          if (mode === 'BEFORE') {
+            if (distance > 0.04) {
+              log("으악! 입속에 현미경 세균들이 우글거려요! 🦠", "#FF3333");
+              
+              if (bugs.length === 0) initBugs();
+
+              // 꿈틀거리는 진짜 벌레 드로잉
+              bugs.forEach(bug => {
+                bug.seed += bug.speed;
+                const x = mouthX + bug.offsetX + Math.sin(bug.seed) * 15;
+                const y = mouthY + bug.offsetY + Math.cos(bug.seed * 0.8) * 10;
+
+                canvasCtx.save();
+                canvasCtx.translate(x, y);
+                canvasCtx.rotate(Math.sin(bug.seed * 0.5));
+                
+                // 아메바 형태의 세포 몸통 그리기
+                canvasCtx.fillStyle = bug.color;
+                canvasCtx.beginPath();
+                for (let a = 0; a < Math.PI * 2; a += 0.4) {
+                  const r = bug.size + Math.sin(a * 4 + bug.seed) * 4;
+                  const bx = Math.cos(a) * r;
+                  const by = Math.sin(a) * r;
+                  if (a === 0) canvasCtx.moveTo(bx, by);
+                  else canvasCtx.lineTo(bx, by);
+                }
+                canvasCtx.closePath();
+                canvasCtx.fill();
+
+                // 징그러운 섬모(다리) 그리기
+                canvasCtx.strokeStyle = bug.color;
+                canvasCtx.lineWidth = 2;
+                for(let j=0; j<6; j++) {
+                  const angle = (j / 6) * Math.PI * 2 + Math.sin(bug.seed);
+                  canvasCtx.beginPath();
+                  canvasCtx.moveTo(Math.cos(angle) * bug.size, Math.sin(angle) * bug.size);
+                  canvasCtx.lineTo(Math.cos(angle) * (bug.size + 8), Math.sin(angle) * (bug.size + 8));
+                  canvasCtx.stroke();
+                }
+                canvasCtx.restore();
+              });
+            } else {
+              log("입을 크게 아~ 벌려서 세균을 검사하세요! 😮", "#FFEB3B");
+              bugs = [];
+            }
+          }
+          
+          // 2️⃣ [양치 후 반짝이 모드]
+          else if (mode === 'AFTER') {
+            log("우와! 세균이 완전히 사라지고 빛이 나요! ✨", "#4CAF50");
+            bugs = []; // 세균은 절대 안 나오게 방어
+
+            // 입을 벌리고 있을 때 리얼한 실사 빛 입자 자동 생성
+            if (distance > 0.02 && Math.random() < 0.4 && lights.length < 25) {
+              lights.push({
+                x: mouthX + (Math.random() - 0.5) * (mouthWidth * 0.7),
+                y: mouthY + (Math.random() - 0.5) * 30,
+                size: 2,
+                maxSize: 35 + Math.random() * 45,
+                alpha: 1,
+                speed: 0.02 + Math.random() * 0.02,
+                rot: Math.random() * Math.PI
+              });
+            }
+
+            // 카메라 렌즈 플레어 빛 효과 드로잉
+            for (let i = lights.length - 1; i >= 0; i--) {
+              let light = lights[i];
+              light.size += (light.maxSize - light.size) * 0.15;
+              light.alpha -= light.speed;
+
+              if (light.alpha <= 0) {
+                lights.splice(i, 1);
+                continue;
+              }
+
+              canvasCtx.save();
+              canvasCtx.globalCompositeOperation = 'screen'; // 빛 레이어 합성 모드
+              canvasCtx.translate(light.x, light.y);
