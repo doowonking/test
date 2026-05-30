@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>AI 양치 수호대 (수동 모드)</title>
+  <title>AI 양치 수호대 (리얼 이펙트)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <style>
     body { margin: 0; text-align: center; font-family: sans-serif; background-color: #1a1a1a; color: white; overflow: hidden; }
     
-    /* 상단 상태 안내창 */
-    #status-box { position: absolute; top: 15px; left: 5%; width: 90%; z-index: 10; background: rgba(0,0,0,0.6); padding: 12px 0; border-radius: 15px; }
+    /* 상단 안내창 */
+    #status-box { position: absolute; top: 15px; left: 5%; width: 90%; z-index: 10; background: rgba(0,0,0,0.7); padding: 12px 0; border-radius: 15px; backdrop-filter: blur(5px); }
     #status { font-size: 22px; font-weight: bold; color: #FFEB3B; }
 
-    /* 하단 상태 변경 버튼 */
+    /* 하단 조작 버튼 */
     #actionBtn { 
       position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10;
       background-color: #4CAF50; color: white; font-size: 22px; font-weight: bold; 
@@ -22,7 +22,7 @@
     }
     #actionBtn:active { transform: translateX(-50%) scale(0.95); }
 
-    /* 카메라 화면 영역 */
+    /* 카메라 영역 */
     #container { position: relative; width: 100vw; height: 100vh; }
     video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
   </style>
@@ -47,8 +47,11 @@
     const actionBtn = document.getElementById('actionBtn');
     const statusDiv = document.getElementById('status');
 
-    // 앱 상태 관리: 'INIT' -> 'BEFORE' (세균) -> 'AFTER' (반짝이)
     let mode = 'INIT'; 
+
+    // --- 그래픽 효과용 파티클 배열 ---
+    let bugs = [];
+    let lights = [];
 
     // AI 설정
     const faceMesh = new FaceMesh({locateFile: (file) => {
@@ -56,7 +59,23 @@
     }});
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
-    // 실시간 AI 그래픽 합성
+    // --- [효과 구현 1] 현미경 속 꿈틀거리는 세균 생성을 위한 데이터 구조 ---
+    function initBugs() {
+      bugs = [];
+      for(let i=0; i<8; i++) {
+        bugs.push({
+          offsetX: (Math.random() - 0.5) * 80, // 입 중심으로부터의 떨어진 거리
+          offsetY: (Math.random() - 0.5) * 50,
+          size: 15 + Math.random() * 15,
+          angle: Math.random() * Math.PI * 2,
+          speed: 0.05 + Math.random() * 0.05,
+          color: ['rgba(58, 93, 40, 0.7)', 'rgba(90, 40, 110, 0.7)', 'rgba(140, 50, 50, 0.7)'][Math.floor(Math.random()*3)],
+          seed: Math.random() * 100 // 꿈틀거림 변수
+        });
+      }
+    }
+
+    // --- AI 결과 수신 및 그래픽 렌더링 루프 ---
     faceMesh.onResults((results) => {
       canvasElement.width = videoElement.videoWidth;
       canvasElement.height = videoElement.videoHeight;
@@ -67,80 +86,94 @@
         const upperLip = landmarks[13];
         const lowerLip = landmarks[14];
         
-        // 입 중앙 좌표 계산
+        // 입 개방도 및 중심 좌표
+        const distance = Math.abs(lowerLip.y - upperLip.y);
         const mouthX = (upperLip.x + lowerLip.x) / 2 * canvasElement.width;
         const mouthY = (upperLip.y + lowerLip.y) / 2 * canvasElement.height;
+        const mouthWidth = Math.abs(landmarks[61].x - landmarks[291].x) * canvasElement.width;
 
-        // [1단계: 양치 전 세균 모드]
+        const now = Date.now();
+
+        // 1️⃣ [양치 전 세균 모드]
         if (mode === 'BEFORE') {
-          statusDiv.innerText = "으악! 입속에 세균 벌레들이 가득해요! 🦠";
-          statusDiv.style.color = "#FF5722";
+          // 💡 수정사항 1: 입을 벌렸을 때만 세균 등장
+          if (distance > 0.04) {
+            statusDiv.innerText = "으악! 입속에 현미경 세균들이 우글거려요! 🦠";
+            statusDiv.style.color = "#FF3333";
 
-          canvasCtx.font = '45px Arial';
-          canvasCtx.textAlign = 'center';
-          canvasCtx.fillText('🦠', mouthX - 60, mouthY - 30);
-          canvasCtx.fillText('👾', mouthX + 60, mouthY + 20);
-          canvasCtx.fillText('😈', mouthX, mouthY + 50);
+            if (bugs.length === 0) initBugs();
+
+            // 세균 그리기 (수정사항 2: 실감 나는 현미경 벌레 및 꿈틀거림)
+            bugs.forEach(bug => {
+              bug.seed += bug.speed;
+              // 입 주변을 유연하게 맴도는 움직임 계산
+              const wiggleX = Math.sin(bug.seed) * 15;
+              const wiggleY = Math.cos(bug.seed * 0.8) * 10;
+              const x = mouthX + bug.offsetX + wiggleX;
+              const y = mouthY + bug.offsetY + wiggleY;
+
+              canvasCtx.save();
+              canvasCtx.translate(x, y);
+              canvasCtx.rotate(Math.sin(bug.seed * 0.5));
+
+              // 아메바/세균 같은 유기체 모양 그리기
+              canvasCtx.fillStyle = bug.color;
+              canvasCtx.beginPath();
+              for (let a = 0; a < Math.PI * 2; a += 0.5) {
+                // 부드럽게 일렁이는 외곽선 표현
+                const offset = Math.sin(a * 4 + bug.seed) * 4; 
+                const r = bug.size + offset;
+                const bx = Math.cos(a) * r;
+                const by = Math.sin(a) * r;
+                if (a === 0) canvasCtx.moveTo(bx, by);
+                else canvasCtx.lineTo(bx, by);
+              }
+              canvasCtx.closePath();
+              canvasCtx.fill();
+
+              // 세균의 징그러운 섬모(다리) 표현
+              canvasCtx.strokeStyle = bug.color;
+              canvasCtx.lineWidth = 2;
+              for(let j=0; j<8; j++) {
+                const angle = (j / 8) * Math.PI * 2 + Math.sin(bug.seed);
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(Math.cos(angle)*bug.size, Math.sin(angle)*bug.size);
+                canvasCtx.lineTo(Math.cos(angle)*(bug.size + 8 + Math.sin(bug.seed*2)*3), Math.sin(angle)*(bug.size + 8 + Math.cos(bug.seed*2)*3));
+                canvasCtx.stroke();
+              }
+
+              // 핵/세포안의 징그러운 점 표현
+              canvasCtx.fillStyle = 'rgba(0,0,0,0.3)';
+              canvasCtx.beginPath(); canvasCtx.arc(-3, -2, bug.size*0.3, 0, Math.PI*2); canvasCtx.fill();
+
+              canvasCtx.restore();
+            });
+
+          } else {
+            statusDiv.innerText = "입을 크게 아~ 벌려서 세균을 검사하세요! 😮";
+            statusDiv.style.color = "#FFEB3B";
+            bugs = []; // 입 닫으면 세균 리셋
+          }
         }
         
-        // [2단계: 양치 후 반짝이 모드]
+        // 2️⃣ [양치 후 반짝이 모드]
         else if (mode === 'AFTER') {
-          statusDiv.innerText = "와~! 세균 전멸! 이빨이 반짝반짝해요! ✨🎉";
+          statusDiv.innerText = "우와! 세균이 완전히 사라지고 빛이 나요! ✨";
           statusDiv.style.color = "#4CAF50";
+          bugs = [];
 
-          canvasCtx.font = '50px Arial';
-          canvasCtx.textAlign = 'center';
-          canvasCtx.fillText('✨', mouthX - 70, mouthY - 40);
-          canvasCtx.fillText('🌟', mouthX + 70, mouthY - 40);
-          canvasCtx.fillText('✨', mouthX - 40, mouthY + 50);
-          canvasCtx.fillText('🦷', mouthX, mouthY); // 하얀 이빨 등장
-        }
-      } else {
-        statusDiv.innerText = "화면에 얼굴을 보여주세요! 👀";
-      }
-    });
+          // 💡 수정사항 3: 실제 실사 느낌의 빛 발산 효과 (치아 이모지 제거)
+          // 입이 열려있을 때 입 안 영역을 중심으로 빛 입자 생성
+          if (distance > 0.02 && Math.random() < 0.4 && lights.length < 20) {
+            lights.push({
+              x: mouthX + (Math.random() - 0.5) * (mouthWidth * 0.6),
+              y: mouthY + (Math.random() - 0.5) * 20,
+              size: 5 + Math.random() * 15,
+              maxSize: 30 + Math.random() * 40,
+              alpha: 1,
+              speed: 0.02 + Math.random() * 0.03,
+              rot: Math.random() * Math.PI
+            });
+          }
 
-    async function animate() {
-      if (videoElement.readyState >= 2) {
-        await faceMesh.send({image: videoElement});
-      }
-      requestAnimationFrame(animate);
-    }
-
-    // 버튼 하나로 순차적 제어
-    actionBtn.addEventListener('click', () => {
-      if (mode === 'INIT') {
-        // 1. 카메라 켜기 ➜ 세균 모드로 진입
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
-          .then(stream => {
-            videoElement.srcObject = stream;
-            videoElement.onloadedmetadata = () => {
-              videoElement.play();
-              animate();
-              mode = 'BEFORE';
-              actionBtn.innerText = "✨ 양치 완료! 결과 보기";
-              actionBtn.style.backgroundColor = "#E91E63"; // 핑크색 변경
-            };
-          })
-          .catch(err => alert("카메라 에러: " + err.message));
-      } 
-      else if (mode === 'BEFORE') {
-        // 2. 세균 모드에서 버튼 클릭 ➜ 반짝이 모드로 변경
-        mode = 'AFTER';
-        actionBtn.innerText = "🔄 다시 검사하기 (처음으로)";
-        actionBtn.style.backgroundColor = "#00BCD4"; // 청록색 변경
-      }
-      else if (mode === 'AFTER') {
-        // 3. 반짝이 모드에서 버튼 클릭 ➜ 다시 세균 모드로 리셋
-        mode = 'BEFORE';
-        actionBtn.innerText = "✨ 양치 완료! 결과 보기";
-        actionBtn.style.backgroundColor = "#E91E63";
-      }
-    });
-
-    // AI 라이브러리가 로드되면 작동 버튼 표시
-    actionBtn.style.display = 'block';
-    statusDiv.innerText = "준비 완료! 아래 버튼을 눌러주세요.";
-  </script>
-</body>
-</html>
+          // 생성된 빛 플레어 그리기
