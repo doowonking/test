@@ -3,87 +3,114 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>수동 버튼 카메라 테스트</title>
+  <title>AI 양치질 도우미</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <style>
-    body { 
-      text-align: center; 
-      font-family: sans-serif; 
-      margin: 0; 
-      padding-top: 30px;
-      background-color: #f0f0f0; 
-    }
-    #startBtn {
-      background-color: #4CAF50;
-      color: white;
-      font-size: 22px;
-      font-weight: bold;
-      padding: 15px 30px;
-      border: none;
-      border-radius: 10px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-      cursor: pointer;
-      margin-bottom: 20px;
-    }
-    #startBtn:active {
-      background-color: #45a049;
-      transform: translateY(2px);
-    }
-    video { 
-      width: 90%; 
-      max-width: 400px; 
-      height: 300px; 
-      background: #222; 
-      border-radius: 10px; 
-      display: none; /* 처음에는 비디오 화면 숨김 */
-      margin: 0 auto;
-    }
-    #status { 
-      font-weight: bold; 
-      font-size: 16px; 
-      color: #333; 
-      padding: 15px; 
-    }
+    body { margin: 0; text-align: center; font-family: sans-serif; background-color: #222; color: white; }
+    #startBtn { background-color: #4CAF50; color: white; font-size: 22px; font-weight: bold; padding: 15px 30px; border: none; border-radius: 10px; margin-top: 50px; cursor: pointer; }
+    #status { font-size: 20px; font-weight: bold; margin: 20px; color: #FFEB3B; }
+    
+    /* 비디오와 그림(캔버스)을 겹치게 만드는 설정 */
+    #container { position: relative; width: 100vw; max-width: 500px; margin: 0 auto; display: none; }
+    video, canvas { width: 100%; border-radius: 10px; transform: scaleX(-1); /* 거울 모드(좌우 반전) */ }
+    canvas { position: absolute; top: 0; left: 0; }
   </style>
 </head>
 <body>
 
-  <button id="startBtn">📷 카메라 켜기 (여기를 누르세요)</button>
+  <button id="startBtn">📷 AI 양치 카메라 켜기</button>
+  <div id="status">버튼을 눌러주세요.</div>
   
-  <div id="status">버튼을 눌러 카메라 권한을 허용해 주세요.</div>
-  
-  <video id="video" autoplay playsinline muted></video>
+  <div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
 
   <script>
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('canvas');
+    const canvasCtx = canvasElement.getContext('2d');
     const startBtn = document.getElementById('startBtn');
     const statusDiv = document.getElementById('status');
-    const video = document.getElementById('video');
+    const container = document.getElementById('container');
 
-    // 버튼을 클릭했을 때만 카메라 요청을 시작합니다.
-    startBtn.addEventListener('click', function() {
-      statusDiv.innerText = "카메라 권한을 요청 중입니다...";
-      statusDiv.style.color = "blue";
+    // 1. AI (FaceMesh) 기본 설정
+    const faceMesh = new FaceMesh({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    }});
+    
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
 
+    // 2. 얼굴을 인식했을 때 실행되는 로직
+    faceMesh.onResults((results) => {
+      // 비디오 해상도에 맞춰 캔버스 크기 조절
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        // 윗입술(13번)과 아랫입술(14번) 좌표
+        const upperLip = landmarks[13];
+        const lowerLip = landmarks[14];
+
+        // 입술 위치에 초록색 점 그리기
+        canvasCtx.fillStyle = '#00FF00';
+        canvasCtx.beginPath();
+        canvasCtx.arc(upperLip.x * canvasElement.width, upperLip.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        canvasCtx.arc(lowerLip.x * canvasElement.width, lowerLip.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        canvasCtx.fill();
+
+        // 윗입술과 아랫입술의 거리 계산 (입을 벌렸는지 확인)
+        const distance = Math.abs(lowerLip.y - upperLip.y);
+        
+        if (distance > 0.04) {
+          statusDiv.innerText = "양치 준비 완료! (입 벌림 😮)";
+          statusDiv.style.color = "#4CAF50"; // 초록색
+        } else {
+          statusDiv.innerText = "입을 크게 아~ 벌려주세요 😐";
+          statusDiv.style.color = "#FFEB3B"; // 노란색
+        }
+      } else {
+        statusDiv.innerText = "화면에 얼굴을 보여주세요!";
+      }
+    });
+
+    // 3. 비디오 프레임마다 AI에게 사진을 보내는 무한 루프
+    async function animate() {
+      if (videoElement.readyState >= 2) {
+        await faceMesh.send({image: videoElement});
+      }
+      requestAnimationFrame(animate);
+    }
+
+    // 4. 수동 버튼 클릭 시 카메라 켜기
+    startBtn.addEventListener('click', () => {
+      statusDiv.innerText = "카메라 켜는 중... (AI 로딩에 몇 초 걸릴 수 있습니다)";
+      
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
-          .then(function(stream) {
-            statusDiv.innerText = "카메라 연결 성공! 🎉";
-            statusDiv.style.color = "green";
+          .then(stream => {
+            startBtn.style.display = 'none'; // 버튼 숨기기
+            container.style.display = 'block'; // 비디오 화면 보이기
             
-            // 버튼 숨기고 비디오 화면 보여주기
-            startBtn.style.display = 'none';
-            video.style.display = 'block';
-            video.srcObject = stream;
+            videoElement.srcObject = stream;
+            videoElement.onloadedmetadata = () => {
+              videoElement.play();
+              animate(); // 비디오가 켜지면 AI 분석 시작!
+            };
           })
-          .catch(function(err) {
+          .catch(err => {
             statusDiv.innerText = "❌ 카메라 에러: " + err.message;
             statusDiv.style.color = "red";
           });
-      } else {
-        statusDiv.innerText = "❌ 이 브라우저는 카메라 기능을 지원하지 않습니다.";
-        statusDiv.style.color = "red";
       }
     });
   </script>
-
 </body>
 </html>
