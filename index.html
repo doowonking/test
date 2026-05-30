@@ -16,7 +16,6 @@
       text-align: center;
     }
     
-    /* 카메라 및 캔버스 래퍼 */
     #container { 
       position: relative; 
       width: 100vw; 
@@ -29,11 +28,9 @@
       width: 100%; 
       height: 100%; 
       object-fit: cover; 
-      /* 거울처럼 보이도록 좌우 반전 */
       transform: scaleX(-1); 
     }
 
-    /* 상단 상태 안내창 */
     #status-box { 
       position: absolute; 
       top: 20px; 
@@ -53,7 +50,6 @@
       margin: 0;
     }
 
-    /* 하단 메인 컨트롤 버튼 */
     #actionBtn { 
       position: absolute; 
       bottom: 50px; 
@@ -76,245 +72,3 @@
       transform: translateX(-50%) scale(0.95); 
       box-shadow: 0 4px 10px rgba(0,188,212,0.5);
     }
-  </style>
-</head>
-<body>
-
-  <div id="status-box">
-    <p id="status">준비 완료! 아래 버튼을 눌러주세요 📷</p>
-  </div>
-
-  <button id="actionBtn">📷 카메라 켜기</button>
-  
-  <div id="container">
-    <video id="video" playsinline autoplay muted></video>
-    <canvas id="canvas"></canvas>
-  </div>
-
-  <script>
-    const videoElement = document.getElementById('video');
-    const canvasElement = document.getElementById('canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const actionBtn = document.getElementById('actionBtn');
-    const statusText = document.getElementById('status');
-
-    let mode = 'INIT'; // INIT -> BEFORE -> AFTER
-    let faceMesh;
-    let bugs = [];
-    let lights = [];
-    let isAILoaded = false;
-
-    // --- 1. 시각 효과 데이터 생성 로직 ---
-
-    // [세균 모드] 현미경 세포 형태의 데이터 생성
-    function initBugs() {
-      bugs = [];
-      for(let i = 0; i < 10; i++) {
-        bugs.push({
-          offsetX: (Math.random() - 0.5) * 120,
-          offsetY: (Math.random() - 0.5) * 80,
-          size: 12 + Math.random() * 18,
-          speed: 0.05 + Math.random() * 0.05,
-          color: ['rgba(58, 93, 40, 0.8)', 'rgba(90, 40, 110, 0.8)', 'rgba(140, 50, 50, 0.8)'][Math.floor(Math.random()*3)],
-          seed: Math.random() * 100
-        });
-      }
-    }
-
-    // --- 2. AI(Face Mesh) 초기화 로직 ---
-    function initializeAI() {
-      faceMesh = new FaceMesh({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-      });
-      
-      faceMesh.setOptions({
-        maxNumFaces: 1,
-        refineLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
-
-      faceMesh.onResults(onResults);
-      isAILoaded = true;
-    }
-
-    // --- 3. 실시간 렌더링(그리기) 로직 ---
-    function onResults(results) {
-      // 캔버스 크기를 비디오 원본 크기에 맞춤
-      canvasElement.width = videoElement.videoWidth;
-      canvasElement.height = videoElement.videoHeight;
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
-        
-        // 13번(윗입술 안쪽), 14번(아랫입술 안쪽) 랜드마크로 입 벌림 정도 측정
-        const upperLip = landmarks[13];
-        const lowerLip = landmarks[14];
-        
-        // y좌표 차이로 입 벌림 수치 계산 (0.04 이상이면 입을 벌린 것으로 간주)
-        const distance = Math.abs(lowerLip.y - upperLip.y);
-        
-        // 입 중심 좌표 계산 (캔버스 픽셀 단위로 변환)
-        const mouthX = (upperLip.x + lowerLip.x) / 2 * canvasElement.width;
-        const mouthY = (upperLip.y + lowerLip.y) / 2 * canvasElement.height;
-        const mouthWidth = Math.abs(landmarks[61].x - landmarks[291].x) * canvasElement.width;
-
-        // 🔴 [양치 전] 벌레 연출
-        if (mode === 'BEFORE') {
-          if (distance > 0.04) {
-            statusText.innerText = "으악! 세균들이 우글거려요! 🦠";
-            statusText.style.color = "#FF5252";
-            
-            if (bugs.length === 0) initBugs();
-
-            bugs.forEach(bug => {
-              bug.seed += bug.speed;
-              // 아메바처럼 흔들리는 위치 보정
-              const x = mouthX + bug.offsetX + Math.sin(bug.seed) * 15;
-              const y = mouthY + bug.offsetY + Math.cos(bug.seed * 0.8) * 10;
-
-              canvasCtx.save();
-              canvasCtx.translate(x, y);
-              canvasCtx.rotate(Math.sin(bug.seed * 0.5));
-              
-              // 불규칙한 세포 몸통 그리기
-              canvasCtx.fillStyle = bug.color;
-              canvasCtx.beginPath();
-              for (let a = 0; a < Math.PI * 2; a += 0.4) {
-                const r = bug.size + Math.sin(a * 4 + bug.seed) * 5;
-                if (a === 0) canvasCtx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-                else canvasCtx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-              }
-              canvasCtx.closePath();
-              canvasCtx.fill();
-
-              // 징그러운 섬모(다리) 그리기
-              canvasCtx.strokeStyle = bug.color;
-              canvasCtx.lineWidth = 2.5;
-              for(let j = 0; j < 7; j++) {
-                const angle = (j / 7) * Math.PI * 2;
-                canvasCtx.beginPath();
-                canvasCtx.moveTo(Math.cos(angle) * bug.size, Math.sin(angle) * bug.size);
-                canvasCtx.lineTo(Math.cos(angle) * (bug.size + 10), Math.sin(angle) * (bug.size + 10));
-                canvasCtx.stroke();
-              }
-              canvasCtx.restore();
-            });
-          } else {
-            statusText.innerText = "입을 크게 아~ 벌려보세요! 😮";
-            statusText.style.color = "#FFEB3B";
-            bugs = []; // 입을 닫으면 세균 리셋
-          }
-        }
-        
-        // ✨ [양치 후] 빛나는 효과 연출
-        else if (mode === 'AFTER') {
-          statusText.innerText = "우와! 치아가 눈부시게 빛나요! ✨";
-          statusText.style.color = "#4CAF50";
-          bugs = []; 
-
-          if (distance > 0.03 && Math.random() < 0.5 && lights.length < 25) {
-            lights.push({
-              x: mouthX + (Math.random() - 0.5) * (mouthWidth * 0.8),
-              y: mouthY + (Math.random() - 0.5) * 40,
-              size: 2,
-              maxSize: 40 + Math.random() * 50,
-              alpha: 1,
-              speed: 0.02 + Math.random() * 0.02,
-              rot: Math.random() * Math.PI
-            });
-          }
-
-          for (let i = lights.length - 1; i >= 0; i--) {
-            let light = lights[i];
-            light.size += (light.maxSize - light.size) * 0.15;
-            light.alpha -= light.speed;
-
-            if (light.alpha <= 0) {
-              lights.splice(i, 1);
-              continue;
-            }
-
-            canvasCtx.save();
-            // 스크린 블렌딩 모드로 겹칠수록 밝아지는 렌즈 플레어 구현
-            canvasCtx.globalCompositeOperation = 'screen';
-            canvasCtx.translate(light.x, light.y);
-            canvasCtx.rotate(light.rot);
-
-            let gradient = canvasCtx.createRadialGradient(0, 0, 0, 0, 0, light.size);
-            gradient.addColorStop(0, `rgba(255, 255, 255, ${light.alpha})`);
-            gradient.addColorStop(0.2, `rgba(255, 245, 180, ${light.alpha * 0.9})`);
-            gradient.addColorStop(0.6, `rgba(255, 255, 255, ${light.alpha * 0.3})`);
-            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
-            canvasCtx.fillStyle = gradient;
-            // 십자가 형태의 빛
-            canvasCtx.beginPath(); canvasCtx.ellipse(0, 0, light.size, light.size * 0.1, 0, 0, Math.PI * 2); canvasCtx.fill();
-            canvasCtx.beginPath(); canvasCtx.ellipse(0, 0, light.size * 0.1, light.size, 0, 0, Math.PI * 2); canvasCtx.fill();
-            canvasCtx.restore();
-          }
-        }
-      } else {
-        if(mode !== 'INIT') {
-          statusText.innerText = "얼굴을 카메라 정면에 맞춰주세요 👀";
-          statusText.style.color = "#FFEB3B";
-        }
-      }
-    }
-
-    // 비디오 프레임마다 AI에 이미지 전달
-    async function cameraLoop() {
-      if (videoElement.readyState >= 2 && isAILoaded) {
-        await faceMesh.send({image: videoElement});
-      }
-      requestAnimationFrame(cameraLoop);
-    }
-
-    // --- 4. 메인 버튼 클릭 및 모드 제어 ---
-    // 모바일 보안 락 우회를 위해 클릭 이벤트 내부에서 '즉시' getUserMedia 호출
-    actionBtn.addEventListener('click', () => {
-      if (mode === 'INIT') {
-        statusText.innerText = "카메라를 연결하고 있습니다... ⏳";
-        
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
-          .then((stream) => {
-            // 카메라 연결 성공
-            videoElement.srcObject = stream;
-            
-            videoElement.onloadedmetadata = () => {
-              videoElement.play();
-              // 카메라가 정상적으로 켜진 후 AI 로딩 시작
-              if(!isAILoaded) initializeAI();
-              cameraLoop();
-              
-              // 모드 변경 및 UI 업데이트
-              mode = 'BEFORE';
-              actionBtn.innerText = "✨ 양치 완료! 결과 보기";
-              actionBtn.style.backgroundColor = "#E91E63";
-              actionBtn.style.boxShadow = "0 8px 20px rgba(233,30,99,0.5)";
-            };
-          })
-          .catch((err) => {
-            alert("카메라 권한이 필요합니다. 브라우저 설정에서 카메라를 허용해주세요.");
-            statusText.innerText = "❌ 카메라 연결 실패";
-            console.error(err);
-          });
-      } 
-      else if (mode === 'BEFORE') {
-        mode = 'AFTER';
-        actionBtn.innerText = "🔄 다시 검사하기";
-        actionBtn.style.backgroundColor = "#00BCD4";
-        actionBtn.style.boxShadow = "0 8px 20px rgba(0,188,212,0.5)";
-      }
-      else if (mode === 'AFTER') {
-        mode = 'BEFORE';
-        lights = []; // 빛 효과 초기화
-        actionBtn.innerText = "✨ 양치 완료! 결과 보기";
-        actionBtn.style.backgroundColor = "#E91E63";
-        actionBtn.style.boxShadow = "0 8px 20px rgba(233,30,99,0.5)";
-      }
-    });
-  </script>
-</body>
-</html>
