@@ -72,3 +72,240 @@
       transform: translateX(-50%) scale(0.95); 
       box-shadow: 0 4px 10px rgba(0,188,212,0.5);
     }
+  </style>
+</head>
+<body>
+
+  <div id="status-box">
+    <p id="status">준비 완료! 아래 버튼을 눌러주세요 📷</p>
+  </div>
+
+  <button id="actionBtn">📷 카메라 켜기</button>
+  
+  <div id="container">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const actionBtn = document.getElementById('actionBtn');
+    const statusText = document.getElementById('status');
+
+    let mode = 'INIT'; 
+    let faceMesh;
+    let bugs = [];
+    let lights = [];
+    let isAILoaded = false;
+
+    // --- 1. 시각 효과 데이터 생성 로직 ---
+
+    // 🐛 [수정됨] 크기를 대폭 줄이고 애벌레 형태로 변경
+    function initBugs() {
+      bugs = [];
+      for(let i = 0; i < 12; i++) {
+        bugs.push({
+          offsetX: (Math.random() - 0.5) * 100,
+          offsetY: (Math.random() - 0.5) * 60,
+          size: 3.5 + Math.random() * 2.5, // ⬅️ 크기를 기존의 약 1/3로 축소
+          speed: 0.02 + Math.random() * 0.03,
+          color: ['#8BC34A', '#CDDC39', '#FFB300'][Math.floor(Math.random()*3)], // 애벌레 느낌의 초록/노란색
+          seed: Math.random() * 100,
+          segments: 4 + Math.floor(Math.random() * 3), // 애벌레의 마디 개수 (4~6개)
+          direction: Math.random() > 0.5 ? 1 : -1 // 좌우 이동 방향
+        });
+      }
+    }
+
+    // --- 2. AI 초기화 로직 ---
+    function initializeAI() {
+      faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+      });
+      faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      faceMesh.onResults(onResults);
+      isAILoaded = true;
+    }
+
+    // --- 3. 실시간 렌더링 로직 ---
+    function onResults(results) {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        const upperLip = landmarks[13];
+        const lowerLip = landmarks[14];
+        const distance = Math.abs(lowerLip.y - upperLip.y);
+        
+        const mouthX = (upperLip.x + lowerLip.x) / 2 * canvasElement.width;
+        const mouthY = (upperLip.y + lowerLip.y) / 2 * canvasElement.height;
+        const mouthWidth = Math.abs(landmarks[61].x - landmarks[291].x) * canvasElement.width;
+
+        // 🔴 [양치 전] 꼬물거리는 애벌레 연출
+        if (mode === 'BEFORE') {
+          if (distance > 0.04) {
+            statusText.innerText = "으악! 충치 벌레들이 기어 다녀요! 🐛";
+            statusText.style.color = "#FF5252";
+            
+            if (bugs.length === 0) initBugs();
+
+            bugs.forEach(bug => {
+              bug.seed += bug.speed;
+              
+              // 기어 다니는 효과 (가로로 조금씩 이동)
+              bug.offsetX += bug.speed * 4 * bug.direction;
+              
+              // 입 주변을 벗어나면 반대쪽에서 다시 등장
+              if(bug.offsetX > 70) bug.offsetX = -70;
+              if(bug.offsetX < -70) bug.offsetX = 70;
+
+              const x = mouthX + bug.offsetX;
+              const y = mouthY + bug.offsetY;
+
+              canvasCtx.save();
+              canvasCtx.translate(x, y);
+              
+              // 이동 방향에 맞춰 회전
+              if (bug.direction === -1) canvasCtx.scale(-1, 1);
+              
+              canvasCtx.fillStyle = bug.color;
+              canvasCtx.strokeStyle = 'rgba(0,0,0,0.6)';
+              canvasCtx.lineWidth = 1;
+
+              // 애벌레 마디(Segment) 그리기
+              for (let s = 0; s < bug.segments; s++) {
+                // 꼬물거리는 위아래 바운스 모션 (Sine 파형 이용)
+                const crawlOffset = Math.sin(bug.seed * 4 - s) * 2;
+                const segX = s * (bug.size * 1.3);
+                const segY = crawlOffset;
+                
+                canvasCtx.beginPath();
+                const segSize = s === 0 ? bug.size * 1.3 : bug.size; // 머리는 약간 더 크게
+                canvasCtx.arc(segX, segY, segSize, 0, Math.PI * 2);
+                canvasCtx.fill();
+                canvasCtx.stroke();
+                
+                // 머리에 더듬이 그리기
+                if (s === 0) {
+                  canvasCtx.beginPath();
+                  canvasCtx.moveTo(segX, segY - segSize);
+                  canvasCtx.lineTo(segX - 3, segY - segSize - 4);
+                  canvasCtx.moveTo(segX, segY - segSize);
+                  canvasCtx.lineTo(segX + 3, segY - segSize - 4);
+                  canvasCtx.stroke();
+                }
+              }
+              canvasCtx.restore();
+            });
+          } else {
+            statusText.innerText = "입을 크게 아~ 벌려보세요! 😮";
+            statusText.style.color = "#FFEB3B";
+            bugs = []; 
+          }
+        }
+        
+        // ✨ [수정됨] 빛 효과 직경 대폭 축소 (섬세한 반짝임)
+        else if (mode === 'AFTER') {
+          statusText.innerText = "우와! 치아가 눈부시게 빛나요! ✨";
+          statusText.style.color = "#4CAF50";
+          bugs = []; 
+
+          if (distance > 0.03 && Math.random() < 0.5 && lights.length < 25) {
+            lights.push({
+              x: mouthX + (Math.random() - 0.5) * (mouthWidth * 0.8),
+              y: mouthY + (Math.random() - 0.5) * 40,
+              size: 1,
+              maxSize: 15 + Math.random() * 15, // ⬅️ 빛 크기를 기존의 절반 이하로 축소
+              alpha: 1,
+              speed: 0.02 + Math.random() * 0.03,
+              rot: Math.random() * Math.PI
+            });
+          }
+
+          for (let i = lights.length - 1; i >= 0; i--) {
+            let light = lights[i];
+            light.size += (light.maxSize - light.size) * 0.15;
+            light.alpha -= light.speed;
+
+            if (light.alpha <= 0) {
+              lights.splice(i, 1);
+              continue;
+            }
+
+            canvasCtx.save();
+            canvasCtx.globalCompositeOperation = 'screen';
+            canvasCtx.translate(light.x, light.y);
+            canvasCtx.rotate(light.rot);
+
+            let gradient = canvasCtx.createRadialGradient(0, 0, 0, 0, 0, light.size);
+            gradient.addColorStop(0, `rgba(255, 255, 255, ${light.alpha})`);
+            gradient.addColorStop(0.3, `rgba(255, 245, 180, ${light.alpha * 0.8})`);
+            gradient.addColorStop(0.7, `rgba(255, 255, 255, ${light.alpha * 0.2})`);
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+            canvasCtx.fillStyle = gradient;
+            // 얇고 샤프한 십자가 형태의 빛
+            canvasCtx.beginPath(); canvasCtx.ellipse(0, 0, light.size, light.size * 0.08, 0, 0, Math.PI * 2); canvasCtx.fill();
+            canvasCtx.beginPath(); canvasCtx.ellipse(0, 0, light.size * 0.08, light.size, 0, 0, Math.PI * 2); canvasCtx.fill();
+            canvasCtx.restore();
+          }
+        }
+      } else {
+        if(mode !== 'INIT') {
+          statusText.innerText = "얼굴을 카메라 정면에 맞춰주세요 👀";
+          statusText.style.color = "#FFEB3B";
+        }
+      }
+    }
+
+    async function cameraLoop() {
+      if (videoElement.readyState >= 2 && isAILoaded) {
+        await faceMesh.send({image: videoElement});
+      }
+      requestAnimationFrame(cameraLoop);
+    }
+
+    // --- 4. 메인 컨트롤 ---
+    actionBtn.addEventListener('click', () => {
+      if (mode === 'INIT') {
+        statusText.innerText = "카메라를 연결하고 있습니다... ⏳";
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
+          .then((stream) => {
+            videoElement.srcObject = stream;
+            videoElement.onloadedmetadata = () => {
+              videoElement.play();
+              if(!isAILoaded) initializeAI();
+              cameraLoop();
+              
+              mode = 'BEFORE';
+              actionBtn.innerText = "✨ 양치 완료! 결과 보기";
+              actionBtn.style.backgroundColor = "#E91E63";
+              actionBtn.style.boxShadow = "0 8px 20px rgba(233,30,99,0.5)";
+            };
+          })
+          .catch((err) => {
+            alert("카메라 권한이 필요합니다. 브라우저 설정에서 카메라를 허용해주세요.");
+            statusText.innerText = "❌ 카메라 연결 실패";
+          });
+      } 
+      else if (mode === 'BEFORE') {
+        mode = 'AFTER';
+        actionBtn.innerText = "🔄 다시 검사하기";
+        actionBtn.style.backgroundColor = "#00BCD4";
+        actionBtn.style.boxShadow = "0 8px 20px rgba(0,188,212,0.5)";
+      }
+      else if (mode === 'AFTER') {
+        mode = 'BEFORE';
+        lights = []; 
+        actionBtn.innerText = "✨ 양치 완료! 결과 보기";
+        actionBtn.style.backgroundColor = "#E91E63";
+        actionBtn.style.boxShadow = "0 8px 20px rgba(233,30,99,0.5)";
+      }
+    });
+  </script>
+</body>
+</html>
